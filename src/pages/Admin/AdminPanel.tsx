@@ -4,16 +4,17 @@ import { Bell, Plus, Users, Clock, BadgeAlert as Alert, UserPlus } from 'lucide-
 import Layout from '../../components/layout/Layout';
 import Button from '../../components/ui/Button';
 import { useAuth } from '../../contexts/AuthContext';
-import { getNotifications, getStudents } from '../../utils/storage';
+import { supabase } from '../../lib/supabase';
 import { Student, Notification } from '../../types';
 import CreateNotification from './CreateNotification';
 
 const AdminPanel: React.FC = () => {
-  const { user, admin, loading, updateStudentRole } = useAuth();
+  const { user, admin, loading } = useAuth();
   const [activeTab, setActiveTab] = useState<'notifications' | 'students'>('notifications');
   const [showCreateNotification, setShowCreateNotification] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   
   const navigate = useNavigate();
   
@@ -22,20 +23,69 @@ const AdminPanel: React.FC = () => {
       navigate('/login');
       return;
     }
-    
-    // Load data
-    setNotifications(getNotifications());
-    setStudents(getStudents());
+
+    const fetchData = async () => {
+      try {
+        // Fetch notifications
+        const { data: notificationsData } = await supabase
+          .from('notifications')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        // Fetch students
+        const { data: studentsData } = await supabase
+          .from('students')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        setNotifications(notificationsData || []);
+        setStudents(studentsData || []);
+      } catch (error) {
+        console.error('Error fetching data:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    if (user?.role === 'admin') {
+      fetchData();
+    }
   }, [user, loading, navigate]);
   
-  const refreshData = () => {
-    setNotifications(getNotifications());
-    setStudents(getStudents());
+  const refreshData = async () => {
+    setIsLoading(true);
+    try {
+      const { data: notificationsData } = await supabase
+        .from('notifications')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      const { data: studentsData } = await supabase
+        .from('students')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      setNotifications(notificationsData || []);
+      setStudents(studentsData || []);
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+    } finally {
+      setIsLoading(false);
+    }
   };
   
   const handleToggleSessionRep = async (student: Student) => {
-    await updateStudentRole(student.id, !student.isSessionRep);
-    refreshData();
+    try {
+      const { error } = await supabase
+        .from('students')
+        .update({ is_session_rep: !student.isSessionRep })
+        .eq('id', student.id);
+
+      if (error) throw error;
+      await refreshData();
+    } catch (error) {
+      console.error('Error updating student role:', error);
+    }
   };
   
   const getCategoryIcon = (category: string) => {
@@ -64,7 +114,7 @@ const AdminPanel: React.FC = () => {
     }
   };
   
-  if (loading) {
+  if (loading || isLoading) {
     return (
       <Layout>
         <div className="flex justify-center items-center h-64">

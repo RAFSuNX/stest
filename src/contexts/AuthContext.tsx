@@ -17,50 +17,76 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [student, setStudent] = useState<Student | null>(null);
   const [admin, setAdmin] = useState<Admin | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const handleAuthStateChange = async (session: any) => {
+    try {
+      if (session?.user) {
+        const { data: claims } = await supabase.rpc('get_claims', {
+          uid: session.user.id
+        });
+
+        if (claims?.role === 'admin') {
+          setUser({
+            id: session.user.id,
+            role: 'admin'
+          });
+          setAdmin({
+            id: session.user.id,
+            email: session.user.email!
+          });
+          setStudent(null);
+        } else {
+          const { data: studentData } = await supabase
+            .from('students')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+
+          if (studentData) {
+            if (studentData.approval_status === 'approved') {
+              setUser({
+                id: session.user.id,
+                role: studentData.is_session_rep ? 'session_rep' : 'student',
+                session: studentData.session
+              });
+            } else {
+              setUser(null);
+            }
+            setStudent(studentData);
+            setAdmin(null);
+          }
+        }
+      } else {
+        setUser(null);
+        setStudent(null);
+        setAdmin(null);
+      }
+    } catch (error) {
+      console.error('Error handling auth state:', error);
+      setUser(null);
+      setStudent(null);
+      setAdmin(null);
+    }
+  };
+
   useEffect(() => {
     const initializeAuth = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          const { data: claims } = await supabase.rpc('get_claims', {
-            uid: session.user.id
-          });
-
-          if (claims?.role === 'admin') {
-            setUser({
-              id: session.user.id,
-              role: 'admin'
-            });
-            setAdmin({
-              id: session.user.id,
-              email: session.user.email!
-            });
-          } else {
-            const { data: studentData } = await supabase
-              .from('students')
-              .select('*')
-              .eq('id', session.user.id)
-              .single();
-
-            if (studentData) {
-              // Only set as active user if approved
-              if (studentData.approval_status === 'approved') {
-                setUser({
-                  id: session.user.id,
-                  role: studentData.is_session_rep ? 'session_rep' : 'student',
-                  session: studentData.session
-                });
-              }
-              setStudent(studentData);
-            }
-          }
-        }
+        await handleAuthStateChange(session);
       } catch (error) {
         console.error('Error checking auth status:', error);
       } finally {
@@ -75,6 +101,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setUser(null);
         setStudent(null);
         setAdmin(null);
+      } else {
+        await handleAuthStateChange(session);
       }
     });
 
@@ -105,7 +133,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return false;
       }
 
-      // Only set as active user if approved
       if (studentData.approval_status === 'approved') {
         setUser({
           id: authUser.id,
