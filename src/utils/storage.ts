@@ -1,150 +1,99 @@
-// Storage utility functions to handle data persistence
+import { supabase } from '../lib/supabase';
 import { Student, Admin, Notification, ReadStatus, User } from '../types';
 
-// Initialize storage with sample data if empty
-const initializeStorage = () => {
-  if (!localStorage.getItem('students')) {
-    localStorage.setItem('students', JSON.stringify([]));
+export const getNotifications = async (): Promise<Notification[]> => {
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching notifications:', error);
+    return [];
   }
-  
-  if (!localStorage.getItem('admins')) {
-    localStorage.setItem('admins', JSON.stringify([
-      {
-        id: 'admin1',
-        username: 'admin',
-        password: 'admin123' // In a real app, this would be hashed
-      }
-    ]));
+
+  return data || [];
+};
+
+export const addNotification = async (notification: Omit<Notification, 'id' | 'createdAt'>): Promise<boolean> => {
+  const { error } = await supabase
+    .from('notifications')
+    .insert([notification]);
+
+  if (error) {
+    console.error('Error adding notification:', error);
+    return false;
   }
-  
-  if (!localStorage.getItem('notifications')) {
-    localStorage.setItem('notifications', JSON.stringify([]));
+
+  return true;
+};
+
+export const getStudents = async (): Promise<Student[]> => {
+  const { data, error } = await supabase
+    .from('students')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching students:', error);
+    return [];
   }
-  
-  if (!localStorage.getItem('readStatus')) {
-    localStorage.setItem('readStatus', JSON.stringify([]));
-  }
+
+  return data || [];
 };
 
-// Student-related storage functions
-export const getStudents = (): Student[] => {
-  initializeStorage();
-  return JSON.parse(localStorage.getItem('students') || '[]');
-};
+export const markNotificationAsRead = async (studentId: string, notificationId: string): Promise<void> => {
+  const { error } = await supabase
+    .from('read_status')
+    .insert([
+      { student_id: studentId, notification_id: notificationId }
+    ]);
 
-export const addStudent = (student: Student): void => {
-  const students = getStudents();
-  students.push(student);
-  localStorage.setItem('students', JSON.stringify(students));
-};
-
-export const updateStudent = (updatedStudent: Student): void => {
-  const students = getStudents();
-  const index = students.findIndex(s => s.id === updatedStudent.id);
-  if (index !== -1) {
-    students[index] = updatedStudent;
-    localStorage.setItem('students', JSON.stringify(students));
-  }
-};
-
-export const getStudentById = (id: string): Student | undefined => {
-  const students = getStudents();
-  return students.find(student => student.id === id);
-};
-
-export const getStudentByRollNumber = (rollNumber: string): Student | undefined => {
-  const students = getStudents();
-  return students.find(student => student.rollNumber === rollNumber);
-};
-
-export const getStudentsBySession = (session: string): Student[] => {
-  const students = getStudents();
-  return students.filter(student => student.session === session);
-};
-
-// Admin-related storage functions
-export const getAdmins = (): Admin[] => {
-  initializeStorage();
-  return JSON.parse(localStorage.getItem('admins') || '[]');
-};
-
-export const getAdminByUsername = (username: string): Admin | undefined => {
-  const admins = getAdmins();
-  return admins.find(admin => admin.username === username);
-};
-
-// Notification-related storage functions
-export const getNotifications = (): Notification[] => {
-  initializeStorage();
-  return JSON.parse(localStorage.getItem('notifications') || '[]');
-};
-
-export const addNotification = (notification: Notification): void => {
-  const notifications = getNotifications();
-  notifications.push(notification);
-  localStorage.setItem('notifications', JSON.stringify(notifications));
-};
-
-export const getNotificationById = (id: string): Notification | undefined => {
-  const notifications = getNotifications();
-  return notifications.find(notification => notification.id === id);
-};
-
-export const getNotificationsForSession = (session: string): Notification[] => {
-  const notifications = getNotifications();
-  return notifications.filter(notification => 
-    notification.targetSessions.includes(session) || 
-    notification.targetSessions.includes('all')
-  ).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-};
-
-// Read status related storage functions
-export const getReadStatuses = (): ReadStatus[] => {
-  initializeStorage();
-  return JSON.parse(localStorage.getItem('readStatus') || '[]');
-};
-
-export const markNotificationAsRead = (studentId: string, notificationId: string): void => {
-  const readStatuses = getReadStatuses();
-  
-  // Check if already marked as read
-  const alreadyRead = readStatuses.some(
-    status => status.studentId === studentId && status.notificationId === notificationId
-  );
-  
-  if (!alreadyRead) {
-    readStatuses.push({
-      studentId,
-      notificationId,
-      readAt: new Date().toISOString()
-    });
-    
-    localStorage.setItem('readStatus', JSON.stringify(readStatuses));
+  if (error) {
+    console.error('Error marking notification as read:', error);
   }
 };
 
-export const getReadStatusesForStudent = (studentId: string): ReadStatus[] => {
-  const readStatuses = getReadStatuses();
-  return readStatuses.filter(status => status.studentId === studentId);
+export const getReadStatusesForStudent = async (studentId: string): Promise<ReadStatus[]> => {
+  const { data, error } = await supabase
+    .from('read_status')
+    .select('*')
+    .eq('student_id', studentId);
+
+  if (error) {
+    console.error('Error fetching read statuses:', error);
+    return [];
+  }
+
+  return data || [];
 };
 
-export const isNotificationRead = (studentId: string, notificationId: string): boolean => {
-  const readStatuses = getReadStatuses();
-  return readStatuses.some(
-    status => status.studentId === studentId && status.notificationId === notificationId
-  );
+export const isNotificationRead = async (studentId: string, notificationId: string): Promise<boolean> => {
+  const { data, error } = await supabase
+    .from('read_status')
+    .select('*')
+    .eq('student_id', studentId)
+    .eq('notification_id', notificationId)
+    .single();
+
+  if (error) {
+    return false;
+  }
+
+  return !!data;
 };
 
-// Current user session management
-export const setCurrentUser = (user: User): void => {
-  localStorage.setItem('currentUser', JSON.stringify(user));
-};
+export const getNotificationsForSession = async (session: string): Promise<Notification[]> => {
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('*')
+    .or(`target_sessions.cs.{${session}},target_sessions.cs.{all}`)
+    .order('created_at', { ascending: false });
 
-export const getCurrentUser = (): User | null => {
-  const userJson = localStorage.getItem('currentUser');
-  return userJson ? JSON.parse(userJson) : null;
-};
+  if (error) {
+    console.error('Error fetching notifications for session:', error);
+    return [];
+  }
 
-export const clearCurrentUser = (): void => {
-  localStorage.removeItem('currentUser');
+  return data || [];
 };

@@ -9,9 +9,10 @@ interface AuthContextType {
   loading: boolean;
   login: (rollNumber: string, password: string) => Promise<boolean>;
   adminLogin: (email: string, password: string) => Promise<boolean>;
-  register: (student: Omit<Student, 'id' | 'createdAt'>) => Promise<boolean>;
+  register: (student: Omit<Student, 'id' | 'createdAt' | 'approvalStatus'>) => Promise<boolean>;
   logout: () => Promise<void>;
   updateStudentRole: (studentId: string, isSessionRep: boolean) => Promise<void>;
+  updateStudentApproval: (studentId: string, status: 'approved' | 'rejected') => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -23,12 +24,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check active session
     const initializeAuth = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
-          // First check if user is an admin
           const { data: claims } = await supabase.rpc('get_claims', {
             uid: session.user.id
           });
@@ -43,34 +42,27 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               email: session.user.email!
             });
           } else {
-            // If not admin, check if student
-            const { data: studentData, error: studentError } = await supabase
+            const { data: studentData } = await supabase
               .from('students')
               .select('*')
               .eq('id', session.user.id)
-              .maybeSingle();
+              .single();
 
-            if (!studentError && studentData) {
-              setUser({
-                id: session.user.id,
-                role: studentData.is_session_rep ? 'session_rep' : 'student',
-                session: studentData.session
-              });
+            if (studentData) {
+              // Only set as active user if approved
+              if (studentData.approval_status === 'approved') {
+                setUser({
+                  id: session.user.id,
+                  role: studentData.is_session_rep ? 'session_rep' : 'student',
+                  session: studentData.session
+                });
+              }
               setStudent(studentData);
-            } else {
-              // If no student data found, sign out
-              await supabase.auth.signOut();
-              setUser(null);
-              setStudent(null);
             }
           }
         }
       } catch (error) {
         console.error('Error checking auth status:', error);
-        // On error, clear auth state
-        setUser(null);
-        setStudent(null);
-        setAdmin(null);
       } finally {
         setLoading(false);
       }
@@ -78,7 +70,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     initializeAuth();
 
-    // Subscribe to auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT') {
         setUser(null);
@@ -94,32 +85,34 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const login = async (rollNumber: string, password: string): Promise<boolean> => {
     try {
-      // First get the student's email using roll number
-      const { data: studentData, error: studentError } = await supabase
-        .from('students')
-        .select('*')
-        .eq('roll_number', rollNumber)
-        .maybeSingle();
-
-      if (studentError || !studentData) {
-        return false;
-      }
-
-      // Sign in with email/password
-      const { error } = await supabase.auth.signInWithPassword({
-        email: `${rollNumber}@school.com`, // Using roll number as email
+      const { data: { user: authUser }, error: signInError } = await supabase.auth.signInWithPassword({
+        email: `${rollNumber}@school.com`,
         password
       });
 
-      if (error) {
+      if (signInError || !authUser) {
         return false;
       }
 
-      setUser({
-        id: studentData.id,
-        role: studentData.is_session_rep ? 'session_rep' : 'student',
-        session: studentData.session
-      });
+      const { data: studentData } = await supabase
+        .from('students')
+        .select('*')
+        .eq('id', authUser.id)
+        .single();
+
+      if (!studentData) {
+        await supabase.auth.signOut();
+        return false;
+      }
+
+      // Only set as active user if approved
+      if (studentData.approval_status === 'approved') {
+        setUser({
+          id: authUser.id,
+          role: studentData.is_session_rep ? 'session_rep' : 'student',
+          session: studentData.session
+        });
+      }
       setStudent(studentData);
 
       return true;
@@ -131,23 +124,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const adminLogin = async (email: string, password: string): Promise<boolean> => {
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data: { user: authUser }, error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password
       });
 
-      if (error) {
-        console.error('Admin login error:', error);
+      if (signInError || !authUser) {
         return false;
       }
 
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      
-      if (!authUser) {
-        return false;
-      }
-
-      // Check if user has admin role in Supabase
       const { data: claims } = await supabase.rpc('get_claims', {
         uid: authUser.id
       });
@@ -174,55 +159,38 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
-  const register = async (studentData: Omit<Student, 'id' | 'createdAt'>): Promise<boolean> => {
+  const register = async (studentData: Omit<Student, 'id' | 'createdAt' | 'approvalStatus'>): Promise<boolean> => {
     try {
-      // Check if roll number already exists
-      const { data: existingStudent, error: checkError } = await supabase
-        .from('students')
-        .select('roll_number')
-        .eq('roll_number', studentData.rollNumber)
-        .maybeSingle();
-
-      if (checkError || existingStudent) {
-        return false;
-      }
-
-      // Create auth user
-      const { error: signUpError, data: { user: newUser } } = await supabase.auth.signUp({
+      const { data: { user: authUser }, error: signUpError } = await supabase.auth.signUp({
         email: `${studentData.rollNumber}@school.com`,
         password: studentData.password
       });
 
-      if (signUpError || !newUser) {
-        throw signUpError;
+      if (signUpError || !authUser) {
+        return false;
       }
 
-      // Create student record
       const { error: insertError } = await supabase
         .from('students')
         .insert({
-          id: newUser.id,
+          id: authUser.id,
           roll_number: studentData.rollNumber,
           full_name: studentData.fullName,
           session: studentData.session,
-          is_session_rep: false
+          is_session_rep: false,
+          approval_status: 'pending'
         });
 
       if (insertError) {
-        throw insertError;
+        return false;
       }
 
-      setUser({
-        id: newUser.id,
-        role: 'student',
-        session: studentData.session
-      });
-
       setStudent({
-        id: newUser.id,
+        id: authUser.id,
         ...studentData,
         createdAt: new Date().toISOString(),
-        isSessionRep: false
+        isSessionRep: false,
+        approvalStatus: 'pending'
       });
 
       return true;
@@ -243,7 +211,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         throw error;
       }
 
-      // Update local state if this is the current user
       if (student?.id === studentId) {
         setStudent(prev => prev ? { ...prev, isSessionRep } : null);
         setUser(prev => prev ? {
@@ -253,6 +220,35 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
     } catch (error) {
       console.error('Error updating student role:', error);
+      throw error;
+    }
+  };
+
+  const updateStudentApproval = async (studentId: string, status: 'approved' | 'rejected') => {
+    try {
+      const { error } = await supabase
+        .from('students')
+        .update({ approval_status: status })
+        .eq('id', studentId);
+
+      if (error) {
+        throw error;
+      }
+
+      if (student?.id === studentId) {
+        setStudent(prev => prev ? { ...prev, approvalStatus: status } : null);
+        if (status === 'approved') {
+          setUser({
+            id: studentId,
+            role: student.isSessionRep ? 'session_rep' : 'student',
+            session: student.session
+          });
+        } else {
+          setUser(null);
+        }
+      }
+    } catch (error) {
+      console.error('Error updating student approval:', error);
       throw error;
     }
   };
@@ -278,17 +274,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       adminLogin,
       register, 
       logout,
-      updateStudentRole
+      updateStudentRole,
+      updateStudentApproval
     }}>
       {children}
     </AuthContext.Provider>
   );
-};
-
-export const useAuth = (): AuthContextType => {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
 };

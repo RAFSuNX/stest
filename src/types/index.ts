@@ -6,13 +6,13 @@ export interface Student {
   session: string;
   password: string;
   createdAt: string;
-  isSessionRep?: boolean; // New field to mark session representatives
+  isSessionRep?: boolean;
+  approvalStatus: 'pending' | 'approved' | 'rejected';
 }
 
 export interface Admin {
   id: string;
-  username: string;
-  password: string;
+  email: string;
 }
 
 export interface Notification {
@@ -21,11 +21,11 @@ export interface Notification {
   content: string;
   category: 'important' | 'academic' | 'general';
   createdAt: string;
-  targetSessions: string[]; // Target specific sessions
+  targetSessions: string[];
   createdBy: {
     id: string;
     role: 'admin' | 'session_rep';
-    session?: string; // Session for session representatives
+    session?: string;
   };
 }
 
@@ -38,5 +38,5 @@ export interface ReadStatus {
 export interface User {
   id: string;
   role: 'student' | 'admin' | 'session_rep';
-  session?: string; // Session for session representatives
+  session?: string;
 }

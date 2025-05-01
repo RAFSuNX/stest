@@ -1,20 +1,20 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Bell } from 'lucide-react';
+import { Bell, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 
 const Login: React.FC = () => {
   const [formData, setFormData] = useState({
-    identifier: '', // roll number for students, email for admin
+    identifier: '',
     password: '',
   });
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [loginType, setLoginType] = useState<'student' | 'admin'>('student');
   
-  const { login, adminLogin } = useAuth();
+  const { login, adminLogin, student } = useAuth();
   const navigate = useNavigate();
   
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -33,6 +33,14 @@ const Login: React.FC = () => {
       
       if (loginType === 'student') {
         success = await login(formData.identifier, formData.password);
+        
+        if (success && student?.approvalStatus === 'pending') {
+          setError('Your account is pending approval from an administrator');
+          return;
+        } else if (success && student?.approvalStatus === 'rejected') {
+          setError('Your registration has been rejected');
+          return;
+        }
       } else {
         success = await adminLogin(formData.identifier, formData.password);
       }
@@ -97,7 +105,10 @@ const Login: React.FC = () => {
           <form className="space-y-6" onSubmit={handleSubmit}>
             {error && (
               <div className="bg-red-50 border-l-4 border-red-500 p-4">
-                <p className="text-sm text-red-700">{error}</p>
+                <div className="flex">
+                  <AlertCircle className="h-5 w-5 text-red-400" />
+                  <p className="ml-3 text-sm text-red-700">{error}</p>
+                </div>
               </div>
             )}
             
@@ -140,4 +151,4 @@ const Login: React.FC = () => {
   );
 };
 
-export default Login;
+export default Login
