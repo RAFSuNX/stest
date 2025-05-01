@@ -15,6 +15,7 @@ const AdminPanel: React.FC = () => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   
   const navigate = useNavigate();
   
@@ -26,22 +27,38 @@ const AdminPanel: React.FC = () => {
 
     const fetchData = async () => {
       try {
+        setError(null);
+        
+        // Check admin role
+        const { data: claims } = await supabase.rpc('get_claims', {
+          uid: user?.id
+        });
+        
+        if (!claims || claims.role !== 'admin') {
+          throw new Error('Unauthorized: Admin access required');
+        }
+
         // Fetch notifications
-        const { data: notificationsData } = await supabase
+        const { data: notificationsData, error: notificationsError } = await supabase
           .from('notifications')
           .select('*')
           .order('created_at', { ascending: false });
 
+        if (notificationsError) throw notificationsError;
+
         // Fetch students
-        const { data: studentsData } = await supabase
+        const { data: studentsData, error: studentsError } = await supabase
           .from('students')
           .select('*')
           .order('created_at', { ascending: false });
+
+        if (studentsError) throw studentsError;
 
         setNotifications(notificationsData || []);
         setStudents(studentsData || []);
       } catch (error) {
         console.error('Error fetching data:', error);
+        setError(error instanceof Error ? error.message : 'An error occurred');
       } finally {
         setIsLoading(false);
       }
@@ -55,20 +72,27 @@ const AdminPanel: React.FC = () => {
   const refreshData = async () => {
     setIsLoading(true);
     try {
-      const { data: notificationsData } = await supabase
+      setError(null);
+      
+      const { data: notificationsData, error: notificationsError } = await supabase
         .from('notifications')
         .select('*')
         .order('created_at', { ascending: false });
 
-      const { data: studentsData } = await supabase
+      if (notificationsError) throw notificationsError;
+
+      const { data: studentsData, error: studentsError } = await supabase
         .from('students')
         .select('*')
         .order('created_at', { ascending: false });
+
+      if (studentsError) throw studentsError;
 
       setNotifications(notificationsData || []);
       setStudents(studentsData || []);
     } catch (error) {
       console.error('Error refreshing data:', error);
+      setError(error instanceof Error ? error.message : 'An error occurred');
     } finally {
       setIsLoading(false);
     }
@@ -76,6 +100,7 @@ const AdminPanel: React.FC = () => {
   
   const handleToggleSessionRep = async (student: Student) => {
     try {
+      setError(null);
       const { error } = await supabase
         .from('students')
         .update({ is_session_rep: !student.isSessionRep })
@@ -85,6 +110,7 @@ const AdminPanel: React.FC = () => {
       await refreshData();
     } catch (error) {
       console.error('Error updating student role:', error);
+      setError(error instanceof Error ? error.message : 'An error occurred');
     }
   };
   
@@ -119,6 +145,24 @@ const AdminPanel: React.FC = () => {
       <Layout>
         <div className="flex justify-center items-center h-64">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        </div>
+      </Layout>
+    );
+  }
+  
+  if (error) {
+    return (
+      <Layout>
+        <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-md">
+          <div className="flex">
+            <div className="flex-shrink-0">
+              <Alert className="h-5 w-5 text-red-400" />
+            </div>
+            <div className="ml-3">
+              <h3 className="text-sm font-medium text-red-800">Error</h3>
+              <p className="mt-1 text-sm text-red-700">{error}</p>
+            </div>
+          </div>
         </div>
       </Layout>
     );
